@@ -1,4 +1,4 @@
-git node_modules/
+node_modules/
 .env
 .env.*
 !.env.example
@@ -12,3 +12,4 @@ build/
 *.db-wal
 
 *.log
+backend/pulsecare-db.json
