@@ -1,0 +1,79 @@
+{
+  "users": [
+    {
+      "id": "doc-1",
+      "name": "Dr. Sarah Jenkins, MD",
+      "email": "doctor@pulsecare.com",
+      "role": "doctor",
+      "avatar": "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=300",
+      "department": "Cardiology",
+      "hospital_id": "DOCTOR-9901"
+    }
+  ],
+  "appointments": [
+    {
+      "id": "APT-1001",
+      "patientId": "pat-1",
+      "patientName": "Alexander Wright",
+      "patientAvatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=300",
+      "doctorId": "doc-1",
+      "doctorName": "Dr. Sarah Jenkins",
+      "department": "Cardiology",
+      "date": "2026-08-03",
+      "timeSlot": "09:30 AM",
+      "type": "In-Person",
+      "status": "approved",
+      "reason": "Routine quarterly ECG follow-up & blood pressure assessment",
+      "notes": null,
+      "createdAt": "2026-07-28"
+    },
+    {
+      "id": "APT-1002",
+      "patientId": "pat-2",
+      "patientName": "Sophia Martinez",
+      "patientAvatar": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=300",
+      "doctorId": "doc-1",
+      "doctorName": "Dr. Sarah Jenkins",
+      "department": "Cardiology",
+      "date": "2026-08-01",
+      "timeSlot": "11:00 AM",
+      "type": "Emergency",
+      "status": "approved",
+      "reason": "Acute palpitations and chest pain onset 2 hours ago",
+      "notes": null,
+      "createdAt": "2026-07-31"
+    }
+  ],
+  "prescriptions": [
+    {
+      "id": "RX-7721",
+      "appointmentId": "APT-1005",
+      "patientId": "pat-1",
+      "patientName": "Alexander Wright",
+      "doctorId": "doc-1",
+      "doctorName": "Dr. Sarah Jenkins",
+      "date": "2026-07-28",
+      "diagnosis": "Primary Essential Hypertension & mild exertional tachycardia",
+      "medications": [
+        {
+          "id": "m1",
+          "name": "Lisinopril",
+          "dosage": "10mg",
+          "frequency": "1-0-0 (Morning)",
+          "duration": "30 Days",
+          "notes": "Take before breakfast"
+        },
+        {
+          "id": "m2",
+          "name": "Atorvastatin",
+          "dosage": "20mg",
+          "frequency": "0-0-1 (Night)",
+          "duration": "30 Days",
+          "notes": "Take after evening meal"
+        }
+      ],
+      "instructions": "Maintain low-sodium diet (<2000mg/day). Monitor blood pressure twice daily."
+    }
+  ],
+  "auditLogs": []
+}
