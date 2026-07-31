@@ -1,1 +1,14 @@
-node_modules
+git node_modules/
+.env
+.env.*
+!.env.example
+
+dist/
+build/
+.vite/
+
+*.db
+*.db-shm
+*.db-wal
+
+*.log
