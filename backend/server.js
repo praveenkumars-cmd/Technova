@@ -1,9 +1,26 @@
 import express from 'express';
 import cors from 'cors';
-import { initDb, readDb, writeDb, createBackupSnapshot } from './db.js';
+import dotenv from 'dotenv';
+import {
+  initDb,
+  readDb,
+  writeDb,
+  fetchAppointmentsFromSupabase,
+  saveAppointmentToSupabase,
+  updateAppointmentStatusInSupabase,
+  fetchPrescriptionsFromSupabase,
+  savePrescriptionToSupabase,
+  fetchDepartmentsFromSupabase,
+  fetchAuditLogsFromSupabase,
+  saveAuditLogToSupabase,
+  fetchUsersFromSupabase,
+  createBackupSnapshot
+} from './db.js';
+
+dotenv.config();
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors({
   origin: '*',
@@ -26,19 +43,33 @@ app.use((req, res, next) => {
   next();
 });
 
+// Root API Endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    message: 'Welcome to PulseCare Enterprise API Engine',
+    version: '1.0.0',
+    status: 'Active',
+    database: 'Supabase PostgreSQL'
+  });
+});
+
 // Health & System Status Endpoint
-app.get('/api/health', (req, res) => {
-  const dbData = readDb();
+app.get('/api/health', async (req, res) => {
+  const users = await fetchUsersFromSupabase();
+  const appointments = await fetchAppointmentsFromSupabase();
+  const prescriptions = await fetchPrescriptionsFromSupabase();
+  const auditLogs = await fetchAuditLogsFromSupabase();
+
   res.json({
     status: 'OK',
     server: 'PulseCare Enterprise Express Backend',
-    database: 'Persistent JSON DB (backend/pulsecare-db.json)',
+    database: 'Supabase PostgreSQL + Local Persistence Engine',
     uptimeSeconds: Math.floor(process.uptime()),
     stats: {
-      totalUsers: dbData.users.length,
-      totalAppointments: dbData.appointments.length,
-      totalPrescriptions: dbData.prescriptions.length,
-      totalAuditLogs: dbData.auditLogs.length
+      totalUsers: users.length,
+      totalAppointments: appointments.length,
+      totalPrescriptions: prescriptions.length,
+      totalAuditLogs: auditLogs.length
     }
   });
 });
@@ -46,16 +77,27 @@ app.get('/api/health', (req, res) => {
 // ------------------------------------------------------------------
 // AUTHENTICATION ENDPOINTS
 // ------------------------------------------------------------------
-app.post('/api/auth/login', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
+  const users = await fetchUsersFromSupabase();
+  const defaultUser = users[0] || {
+    id: 'pat-1',
+    name: 'Alexander Wright',
+    email: 'patient@pulsecare.com',
+    role: 'patient'
+  };
+  res.json(defaultUser);
+});
+
+app.post('/api/auth/login', async (req, res) => {
   const { email, role } = req.body;
 
   if (!role) {
     return res.status(400).json({ error: 'Validation Error: User role parameter is required.' });
   }
 
-  const dbData = readDb();
+  const users = await fetchUsersFromSupabase();
   const targetEmail = email || `${role}@pulsecare.com`;
-  let user = dbData.users.find((u) => u.email === targetEmail || u.role === role);
+  let user = users.find((u) => u.email === targetEmail || u.role === role);
 
   if (!user) {
     user = {
@@ -77,11 +119,10 @@ app.post('/api/auth/login', (req, res) => {
       department: role === 'doctor' ? 'Cardiology' : 'Main Desk',
       hospitalId: `${role.toUpperCase()}-9901`,
     };
-    dbData.users.push(user);
   }
 
   // Record audit log
-  dbData.auditLogs.unshift({
+  const auditLog = {
     id: `LOG-${Math.floor(9000 + Math.random() * 1000)}`,
     action: `${user.role.toUpperCase()} Authentication`,
     user: user.name,
@@ -89,9 +130,14 @@ app.post('/api/auth/login', (req, res) => {
     timestamp: new Date().toLocaleString(),
     ipAddress: req.ip || '127.0.0.1',
     status: 'Success'
-  });
+  };
 
-  writeDb(dbData);
+  await saveAuditLogToSupabase(auditLog);
+
+  // Sync to local fallback DB
+  const localDb = readDb();
+  localDb.auditLogs.unshift(auditLog);
+  writeDb(localDb);
 
   res.json({
     token: `pulse-jwt-${Date.now()}-secure-token`,
@@ -102,19 +148,18 @@ app.post('/api/auth/login', (req, res) => {
 // ------------------------------------------------------------------
 // APPOINTMENTS ENDPOINTS
 // ------------------------------------------------------------------
-app.get('/api/appointments', (req, res) => {
-  const dbData = readDb();
-  res.json(dbData.appointments);
+app.get('/api/appointments', async (req, res) => {
+  const appointments = await fetchAppointmentsFromSupabase();
+  res.json(appointments);
 });
 
-app.post('/api/appointments', (req, res) => {
+app.post('/api/appointments', async (req, res) => {
   const { doctorName, department, date, timeSlot } = req.body;
 
   if (!doctorName || !date || !timeSlot) {
     return res.status(400).json({ error: 'Validation Error: doctorName, date, and timeSlot are required fields.' });
   }
 
-  const dbData = readDb();
   const id = `APT-${Math.floor(1000 + Math.random() * 9000)}`;
   const status = req.body.type === 'Emergency' ? 'approved' : 'pending';
 
@@ -137,13 +182,17 @@ app.post('/api/appointments', (req, res) => {
     createdAt: new Date().toISOString().split('T')[0]
   };
 
-  dbData.appointments.unshift(newApt);
-  writeDb(dbData);
+  await saveAppointmentToSupabase(newApt);
+
+  // Sync local JSON
+  const localDb = readDb();
+  localDb.appointments.unshift(newApt);
+  writeDb(localDb);
 
   res.status(201).json(newApt);
 });
 
-app.patch('/api/appointments/:id/status', (req, res) => {
+app.patch('/api/appointments/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, reason } = req.body;
 
@@ -151,36 +200,35 @@ app.patch('/api/appointments/:id/status', (req, res) => {
     return res.status(400).json({ error: 'Validation Error: Status parameter is required.' });
   }
 
-  const dbData = readDb();
-  const apt = dbData.appointments.find((a) => a.id === id);
+  await updateAppointmentStatusInSupabase(id, status, reason);
 
-  if (!apt) {
-    return res.status(404).json({ error: `Appointment ID ${id} not found in database.` });
+  const localDb = readDb();
+  const apt = localDb.appointments.find((a) => a.id === id);
+  if (apt) {
+    apt.status = status;
+    if (reason) apt.rejectionReason = reason;
+    writeDb(localDb);
+    res.json(apt);
+  } else {
+    res.json({ id, status, rejectionReason: reason });
   }
-
-  apt.status = status;
-  if (reason) apt.rejectionReason = reason;
-
-  writeDb(dbData);
-  res.json(apt);
 });
 
 // ------------------------------------------------------------------
 // PRESCRIPTIONS ENDPOINTS
 // ------------------------------------------------------------------
-app.get('/api/prescriptions', (req, res) => {
-  const dbData = readDb();
-  res.json(dbData.prescriptions);
+app.get('/api/prescriptions', async (req, res) => {
+  const prescriptions = await fetchPrescriptionsFromSupabase();
+  res.json(prescriptions);
 });
 
-app.post('/api/prescriptions', (req, res) => {
+app.post('/api/prescriptions', async (req, res) => {
   const { patientName, doctorName, diagnosis, medications } = req.body;
 
   if (!patientName || !diagnosis || !medications || !Array.isArray(medications)) {
     return res.status(400).json({ error: 'Validation Error: patientName, diagnosis, and medications array are required.' });
   }
 
-  const dbData = readDb();
   const newPx = {
     id: `RX-${Math.floor(7000 + Math.random() * 2000)}`,
     appointmentId: req.body.appointmentId || null,
@@ -194,23 +242,63 @@ app.post('/api/prescriptions', (req, res) => {
     instructions: req.body.instructions || 'Follow prescribed dosage schedule.'
   };
 
-  dbData.prescriptions.unshift(newPx);
-  writeDb(dbData);
+  await savePrescriptionToSupabase(newPx);
+
+  const localDb = readDb();
+  localDb.prescriptions.unshift(newPx);
+  writeDb(localDb);
 
   res.status(201).json(newPx);
 });
 
 // ------------------------------------------------------------------
-// DIRECTORY & ADMIN ENDPOINTS
+// ADDITIONAL UTILITY ENDPOINTS
 // ------------------------------------------------------------------
-app.get('/api/departments', (req, res) => {
-  const dbData = readDb();
-  res.json(dbData.departments);
+app.get('/api/shifts', (req, res) => {
+  res.json([
+    { id: 'SH-1', doctorName: 'Dr. Sarah Jenkins', shift: 'Morning (08:00 AM - 02:00 PM)', department: 'Cardiology', date: new Date().toISOString().split('T')[0] },
+    { id: 'SH-2', doctorName: 'Dr. Robert Chen', shift: 'Evening (02:00 PM - 08:00 PM)', department: 'Neurology', date: new Date().toISOString().split('T')[0] }
+  ]);
 });
 
-app.get('/api/admin/audit-logs', (req, res) => {
-  const dbData = readDb();
-  res.json(dbData.auditLogs);
+app.get('/api/emergencies', async (req, res) => {
+  const appointments = await fetchAppointmentsFromSupabase();
+  const emergencyList = appointments.filter((a) => a.type === 'Emergency');
+  res.json(emergencyList);
+});
+
+app.get('/api/health-records/:patientId', async (req, res) => {
+  const { patientId } = req.params;
+  const prescriptions = await fetchPrescriptionsFromSupabase();
+  const patientPrescriptions = prescriptions.filter((p) => p.patientId === patientId || patientId === 'pat-1');
+
+  res.json({
+    patientId,
+    patientName: 'Alexander Wright',
+    bloodGroup: 'O+',
+    allergies: ['Penicillin', 'Peanuts'],
+    chronicConditions: ['Hypertension'],
+    vitals: {
+      bloodPressure: '120/80 mmHg',
+      heartRate: '72 bpm',
+      temperature: '98.6 °F',
+      spo2: '99%'
+    },
+    prescriptions: patientPrescriptions
+  });
+});
+
+// ------------------------------------------------------------------
+// DIRECTORY & ADMIN ENDPOINTS
+// ------------------------------------------------------------------
+app.get('/api/departments', async (req, res) => {
+  const departments = await fetchDepartmentsFromSupabase();
+  res.json(departments);
+});
+
+app.get('/api/admin/audit-logs', async (req, res) => {
+  const auditLogs = await fetchAuditLogsFromSupabase();
+  res.json(auditLogs);
 });
 
 app.post('/api/admin/backup', (req, res) => {
@@ -239,8 +327,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`\n==================================================`);
   console.log(`🚀 PulseCare Enterprise Backend API is LIVE on port ${PORT}`);
-  console.log(`🗄️ Database File: backend/pulsecare-db.json`);
-  console.log(`💾 Backup Dir:    backend/backups/`);
+  console.log(`⚡ Database Mode: Supabase PostgreSQL + Fallback Local Persistence Engine`);
   console.log(`📡 Base Endpoint: http://localhost:${PORT}/api`);
   console.log(`==================================================\n`);
 });

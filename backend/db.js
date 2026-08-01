@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import supabase from './supabaseClient.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,24 +78,6 @@ const initialDatabaseState = {
       reason: 'Routine quarterly ECG follow-up & blood pressure assessment',
       notes: 'Patient responded well to Lisinopril therapy.',
       createdAt: '2026-07-28'
-    },
-    {
-      id: 'APT-1002',
-      patientId: 'pat-2',
-      patientName: 'Sophia Martinez',
-      patientAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=300',
-      patientPhone: '+1 (555) 432-1098',
-      doctorId: 'doc-1',
-      doctorName: 'Dr. Sarah Jenkins',
-      doctorAvatar: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=300',
-      department: 'Cardiology',
-      date: '2026-08-01',
-      timeSlot: '11:00 AM',
-      type: 'Emergency',
-      status: 'approved',
-      reason: 'Acute palpitations and chest pain onset 2 hours ago',
-      notes: 'ER triage priority high.',
-      createdAt: '2026-07-31'
     }
   ],
   prescriptions: [
@@ -123,15 +106,6 @@ const initialDatabaseState = {
       timestamp: '2026-07-31 09:14 AM',
       ipAddress: '192.168.1.45',
       status: 'Success'
-    },
-    {
-      id: 'LOG-9002',
-      action: 'Medical Record View',
-      user: 'Alexander Wright',
-      role: 'Patient',
-      timestamp: '2026-07-31 10:22 AM',
-      ipAddress: '10.0.0.12',
-      status: 'Success'
     }
   ]
 };
@@ -141,7 +115,7 @@ if (!fs.existsSync(backupDir)) {
   fs.mkdirSync(backupDir, { recursive: true });
 }
 
-// Read database from disk
+// Read database from disk (fallback sync)
 export function readDb() {
   try {
     if (!fs.existsSync(dbFilePath)) {
@@ -151,18 +125,209 @@ export function readDb() {
     const data = fs.readFileSync(dbFilePath, 'utf8');
     return JSON.parse(data);
   } catch (err) {
-    console.error('[Database Engine] Error reading database file:', err.message);
+    console.error('[Database Engine] Error reading local db file:', err.message);
     writeDb(initialDatabaseState);
     return initialDatabaseState;
   }
 }
 
-// Write database to disk atomically
+// Write database to disk atomically (fallback sync)
 export function writeDb(data) {
   try {
     fs.writeFileSync(dbFilePath, JSON.stringify(data, null, 2), 'utf8');
   } catch (err) {
-    console.error('[Database Engine] Error writing database file:', err.message);
+    console.error('[Database Engine] Error writing local db file:', err.message);
+  }
+}
+
+// ==================================================================
+// SUPABASE ASYNC DATABASE OPERATIONS
+// ==================================================================
+
+export async function fetchUsersFromSupabase() {
+  try {
+    const { data, error } = await supabase.from('users').select('*');
+    if (error || !data || data.length === 0) {
+      return readDb().users;
+    }
+    return data.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      avatar: u.avatar,
+      department: u.department,
+      hospitalId: u.hospital_id,
+      phone: u.phone,
+      specialty: u.specialty,
+      experience: u.experience,
+      bloodGroup: u.blood_group,
+      age: u.age,
+      gender: u.gender,
+      createdAt: u.created_at
+    }));
+  } catch {
+    return readDb().users;
+  }
+}
+
+export async function fetchAppointmentsFromSupabase() {
+  try {
+    const { data, error } = await supabase.from('appointments').select('*').order('created_at', { ascending: false });
+    if (error || !data) {
+      return readDb().appointments;
+    }
+    return data.map((a) => ({
+      id: a.id,
+      patientId: a.patient_id,
+      patientName: a.patient_name,
+      patientAvatar: a.patient_avatar,
+      patientPhone: a.patient_phone,
+      doctorId: a.doctor_id,
+      doctorName: a.doctor_name,
+      doctorAvatar: a.doctor_avatar,
+      department: a.department,
+      date: a.date,
+      timeSlot: a.time_slot,
+      type: a.type,
+      status: a.status,
+      reason: a.reason,
+      rejectionReason: a.rejection_reason,
+      notes: a.notes,
+      createdAt: a.created_at
+    }));
+  } catch {
+    return readDb().appointments;
+  }
+}
+
+export async function saveAppointmentToSupabase(apt) {
+  try {
+    const payload = {
+      id: apt.id,
+      patient_id: apt.patientId,
+      patient_name: apt.patientName,
+      patient_avatar: apt.patientAvatar,
+      patient_phone: apt.patientPhone,
+      doctor_id: apt.doctorId,
+      doctor_name: apt.doctorName,
+      doctor_avatar: apt.doctorAvatar,
+      department: apt.department,
+      date: apt.date,
+      time_slot: apt.timeSlot,
+      type: apt.type,
+      status: apt.status,
+      reason: apt.reason,
+      notes: apt.notes
+    };
+    await supabase.from('appointments').upsert(payload);
+  } catch (err) {
+    console.warn('[Supabase Sync Warning]', err.message);
+  }
+}
+
+export async function updateAppointmentStatusInSupabase(id, status, reason) {
+  try {
+    await supabase.from('appointments').update({ status, rejection_reason: reason }).eq('id', id);
+  } catch (err) {
+    console.warn('[Supabase Sync Warning]', err.message);
+  }
+}
+
+export async function fetchPrescriptionsFromSupabase() {
+  try {
+    const { data, error } = await supabase.from('prescriptions').select('*').order('created_at', { ascending: false });
+    if (error || !data) {
+      return readDb().prescriptions;
+    }
+    return data.map((p) => ({
+      id: p.id,
+      appointmentId: p.appointment_id,
+      patientId: p.patient_id,
+      patientName: p.patient_name,
+      doctorId: p.doctor_id,
+      doctorName: p.doctor_name,
+      date: p.date,
+      diagnosis: p.diagnosis,
+      medications: p.medications,
+      instructions: p.instructions
+    }));
+  } catch {
+    return readDb().prescriptions;
+  }
+}
+
+export async function savePrescriptionToSupabase(px) {
+  try {
+    const payload = {
+      id: px.id,
+      appointment_id: px.appointmentId,
+      patient_id: px.patientId,
+      patient_name: px.patientName,
+      doctor_id: px.doctorId,
+      doctor_name: px.doctorName,
+      date: px.date,
+      diagnosis: px.diagnosis,
+      medications: px.medications,
+      instructions: px.instructions
+    };
+    await supabase.from('prescriptions').upsert(payload);
+  } catch (err) {
+    console.warn('[Supabase Sync Warning]', err.message);
+  }
+}
+
+export async function fetchDepartmentsFromSupabase() {
+  try {
+    const { data, error } = await supabase.from('departments').select('*');
+    if (error || !data || data.length === 0) {
+      return readDb().departments;
+    }
+    return data.map((d) => ({
+      id: d.id,
+      name: d.name,
+      headDoctor: d.head_doctor,
+      doctorCount: d.doctor_count,
+      description: d.description
+    }));
+  } catch {
+    return readDb().departments;
+  }
+}
+
+export async function fetchAuditLogsFromSupabase() {
+  try {
+    const { data, error } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false });
+    if (error || !data || data.length === 0) {
+      return readDb().auditLogs;
+    }
+    return data.map((l) => ({
+      id: l.id,
+      action: l.action,
+      user: l.user_name,
+      role: l.role,
+      timestamp: l.timestamp,
+      ipAddress: l.ip_address,
+      status: l.status
+    }));
+  } catch {
+    return readDb().auditLogs;
+  }
+}
+
+export async function saveAuditLogToSupabase(log) {
+  try {
+    await supabase.from('audit_logs').upsert({
+      id: log.id,
+      action: log.action,
+      user_name: log.user,
+      role: log.role,
+      timestamp: log.timestamp,
+      ip_address: log.ipAddress,
+      status: log.status
+    });
+  } catch (err) {
+    console.warn('[Supabase Audit Sync Warning]', err.message);
   }
 }
 
@@ -173,18 +338,6 @@ export function createBackupSnapshot() {
     const snapshotPath = path.resolve(backupDir, `pulsecare-backup-${timestamp}.json`);
     const currentData = readDb();
     fs.writeFileSync(snapshotPath, JSON.stringify(currentData, null, 2), 'utf8');
-    
-    // Log audit event
-    currentData.auditLogs.unshift({
-      id: `LOG-${Math.floor(9000 + Math.random() * 1000)}`,
-      action: 'System Backup Snapshot Created',
-      user: 'System Vault',
-      role: 'Admin',
-      timestamp: new Date().toLocaleString(),
-      ipAddress: '127.0.0.1',
-      status: 'Success'
-    });
-    writeDb(currentData);
 
     return {
       success: true,
@@ -199,7 +352,21 @@ export function createBackupSnapshot() {
 
 export function initDb() {
   readDb();
-  console.log(`[Database Engine] High-availability persistent database initialized at ${dbFilePath}`);
+  console.log(`[Database Engine] Persistent database initialized.`);
 }
 
-export default { readDb, writeDb, createBackupSnapshot, initDb };
+export default {
+  readDb,
+  writeDb,
+  fetchUsersFromSupabase,
+  fetchAppointmentsFromSupabase,
+  saveAppointmentToSupabase,
+  updateAppointmentStatusInSupabase,
+  fetchPrescriptionsFromSupabase,
+  savePrescriptionToSupabase,
+  fetchDepartmentsFromSupabase,
+  fetchAuditLogsFromSupabase,
+  saveAuditLogToSupabase,
+  createBackupSnapshot,
+  initDb
+};
